@@ -1,0 +1,12 @@
+{
+  "name": "Movie Discovery Plugin",
+  "version": "1.0.0",
+  "providers": [
+    {
+      "id": "tmdb-discovery",
+      "name": "TMDb & OTT Search",
+      "type": "movie",
+      "entry": "index.js"
+    }
+  ]
+}
