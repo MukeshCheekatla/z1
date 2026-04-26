@@ -2,7 +2,6 @@
   "name": "nuvio-movie-discovery",
   "version": "1.0.0",
   "description": "Nuvio plugin for movie discovery and streaming links",
-  "type": "module",
   "main": "index.js",
   "keywords": [
     "nuvio",
@@ -11,5 +10,8 @@
     "streaming"
   ],
   "author": "",
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "cheerio-without-node-native": "^0.20.2"
+  }
 }
