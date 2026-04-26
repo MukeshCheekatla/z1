@@ -1,175 +1,115 @@
 /**
- * 1TamilMV - Super Scraper (Nuvio Elite Edition)
- * Fixed for "Empty Box" and "Playback Error"
+ * 1TamilMV - Hermes-Bulletproof Edition
+ * NO async/await (Pure Promises) to prevent Nuvio crashes
  */
 
 const cheerio = require('cheerio-without-node-native');
 
-// --- Polyfills for Hermes Compatibility ---
-const BASE64_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
-function atob(value) {
-    if (!value) return '';
-    let input = String(value).replace(/=+$/, '');
-    let output = '';
-    let bc = 0, bs, buffer, idx = 0;
-    while ((buffer = input.charAt(idx++))) {
-        buffer = BASE64_CHARS.indexOf(buffer);
-        if (~buffer) {
-            bs = bc % 4 ? bs * 64 + buffer : buffer;
-            if (bc++ % 4) {
-                output += String.fromCharCode(255 & (bs >> ((-2 * bc) & 6)));
-            }
+// --- Polyfills ---
+function atob(v) {
+    var b = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+    var o = '', c = 0, bs, b1, i = 0;
+    v = String(v).replace(/=+$/, '');
+    while (b1 = v.charAt(i++)) {
+        b1 = b.indexOf(b1);
+        if (~b1) {
+            bs = c % 4 ? bs * 64 + b1 : b1;
+            if (c++ % 4) o += String.fromCharCode(255 & (bs >> ((-2 * c) & 6)));
         }
     }
-    return output;
+    return o;
 }
 
-// --- Configuration ---
-const TMDB_API_KEY = '1b3113663c9004682ed61086cf967c44'; 
-const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
-const MAIN_URL = 'https://www.1tamilmv.lc'; 
-
-const HEADERS = {
+// --- Config ---
+var TMDB_KEY = '1b3113663c9004682ed61086cf967c44';
+var MAIN_URL = 'https://www.1tamilmv.lc';
+var HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Referer": `${MAIN_URL}/`,
+    "Referer": MAIN_URL + "/"
 };
 
-// --- Utility Functions ---
+// --- Helpers ---
 
-async function fetchWithTimeout(url, options = {}, timeout = 12000) {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeout);
-    try {
-        const response = await fetch(url, { ...options, signal: controller.signal });
-        clearTimeout(id);
-        return response;
-    } catch (e) {
-        clearTimeout(id);
-        throw e;
-    }
+function cleanTitle(t) {
+    var m = t.match(/\[(.*?)\]/);
+    if (!m) return { q: "HD", s: "Cloud", c: "AVC" };
+    var p = m[1].split("-");
+    return {
+        q: p[0].trim() || "HD",
+        s: (p.find(function(x){ return x.includes("GB") || x.includes("MB") }) || "Unknown").trim(),
+        c: (p.find(function(x){ return /AVC|HEVC|x264|x265/i.test(x) }) || "AVC").trim()
+    };
 }
 
-function cleanTitle(title) {
-    const bracketMatch = title.match(/\[(.*?)\]/);
-    if (!bracketMatch) return { quality: "HD", size: "Cloud", codec: "AVC", source: "WEB-DL" };
-
-    const content = bracketMatch[1];
-    const parts = content.split("-").map(p => p.trim());
-    const quality = parts[0].split(/[,&]/)[0].trim() || "HD";
-    const sizesStr = parts.find(p => p.includes("GB") || p.includes("MB")) || "";
-    const size = sizesStr.split(/[-&]/)[0].trim() || "Unknown";
-    const codec = parts.find(p => /AVC|HEVC|x264|x265/i.test(p)) || "AVC";
-    const source = title.includes("TRUE WEB-DL") ? "TRUE WEB-DL" : (title.includes("UNTOUCHED") ? "UNTOUCHED" : "WEB-DL");
-
-    return { quality, size, codec, source };
+function extractStream(url) {
+    return fetch(url, { headers: HEADERS })
+        .then(function(r) { return r.text(); })
+        .then(function(h) {
+            var m = h.match(/https?:\/\/[^\s"']+\.m3u8[^\s"']*/i) || h.match(/https?:\/\/[^\s"']+\.mp4[^\s"']*/i);
+            return m ? m[0].replace(/\\/g, '') : null;
+        })
+        .catch(function() { return null; });
 }
 
-async function extractDirectStream(embedUrl) {
-    try {
-        const url = new URL(embedUrl);
-        const hostname = url.hostname.toLowerCase();
+// --- Main Engine ---
 
-        if (hostname.includes('strmup')) {
-            const filecode = url.pathname.split('/').filter(p => p).pop();
-            const ajaxUrl = `${url.origin}/ajax/stream?filecode=${filecode}`;
-            const res = await fetchWithTimeout(ajaxUrl, {
-                headers: { ...HEADERS, 'X-Requested-With': 'XMLHttpRequest', 'Referer': embedUrl }
+function getStreams(tmdbId, type, season, episode) {
+    var url = "https://api.themoviedb.org/3/" + (type === 'movie' ? 'movie' : 'tv') + "/" + tmdbId + "?api_key=" + TMDB_KEY;
+    
+    return fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var title = data.title || data.name;
+            var year = (data.release_date || data.first_air_date || "").split("-")[0];
+            
+            // Search multiple categories (Homepage + Archives)
+            var targets = [MAIN_URL, MAIN_URL + "/index.php?/forums/forum/11-tamil-new-movies/"];
+            
+            return Promise.all(targets.map(function(t) {
+                return fetch(t, { headers: HEADERS }).then(function(r) { return r.text(); });
+            })).then(function(pages) {
+                var streams = [];
+                var matches = [];
+                
+                pages.forEach(function(html) {
+                    var $ = cheerio.load(html);
+                    $('a:contains("[WATCH]")').each(function() {
+                        var watchUrl = $(this).attr("href");
+                        var text = $(this).parent().text() || $(this).text();
+                        if (text.toLowerCase().indexOf(title.toLowerCase()) !== -1) {
+                            matches.push({ t: text, u: watchUrl });
+                        }
+                    });
+                });
+
+                // Extract first 3 matches
+                return Promise.all(matches.slice(0, 3).map(function(m) {
+                    return extractStream(m.u).then(function(finalUrl) {
+                        if (!finalUrl) return null;
+                        var info = cleanTitle(m.t);
+                        return {
+                            name: "1TamilMV",
+                            title: "1TamilMV (" + info.q + ")\n📹: " + info.c + "\n📼: " + title + " (" + year + ")\n💾: " + info.s,
+                            url: finalUrl,
+                            quality: info.q,
+                            headers: { "User-Agent": HEADERS["User-Agent"], "Referer": m.u }
+                        };
+                    });
+                }));
             });
-            const data = await res.json();
-            if (data && data.streaming_url) return data.streaming_url;
-        }
-
-        const response = await fetchWithTimeout(embedUrl, { headers: { ...HEADERS, 'Referer': MAIN_URL } });
-        let html = await response.text();
-
-        const patterns = [
-            /https?:\/\/[^\s"']+\.m3u8[^\s"']*/gi,
-            /https?:\/\/[^\s"']+\.mp4[^\s"']*/gi,
-            /file\s*:\s*["']([^"']+)["']/i
-        ];
-        for (const pattern of patterns) {
-            const match = html.match(pattern);
-            if (match) return (Array.isArray(match) ? match[0] : match[1]).replace(/\\/g, '');
-        }
-        return null;
-    } catch (e) {
-        return null;
-    }
-}
-
-// --- Main Scraper ---
-
-async function getStreams(tmdbId, mediaType, season, episode) {
-    try {
-        // 1. TMDB Meta
-        const type = mediaType === 'movie' ? 'movie' : 'tv';
-        const tmdbUrl = `${TMDB_BASE_URL}/${type}/${tmdbId}?api_key=${TMDB_API_KEY}`;
-        const tmdbRes = await fetchWithTimeout(tmdbUrl);
-        const data = await tmdbRes.json();
-        const mediaTitle = data.title || data.name || "Unknown";
-        const mediaYear = (data.release_date || data.first_air_date || "").split("-")[0] || "";
-
-        // 2. Scouting
-        const homeRes = await fetchWithTimeout(MAIN_URL, { headers: HEADERS });
-        const homeHtml = await homeRes.text();
-        const $ = cheerio.load(homeHtml);
-        const candidates = [];
-
-        $('a:contains("[WATCH]")').each((i, el) => {
-            const watchUrl = $(el).attr("href");
-            if (!watchUrl) return;
-
-            let curr = el.previousSibling;
-            let parts = [];
-            while (curr && parts.length < 5) {
-                if (curr.nodeType === 3) parts.unshift(curr.nodeValue);
-                curr = curr.previousSibling;
-            }
-            const forumTitle = parts.join(" ").trim();
-            if (forumTitle.toLowerCase().includes(mediaTitle.toLowerCase())) {
-                candidates.push({ forumTitle, watchUrl });
-            }
+        })
+        .then(function(results) {
+            return results.filter(function(x) { return x !== null; });
+        })
+        .catch(function(e) {
+            console.error("TamilMV Error:", e);
+            return [];
         });
-
-        const finalResults = [];
-        for (const cand of candidates.slice(0, 5)) {
-            const streamUrl = await extractDirectStream(cand.watchUrl);
-            if (!streamUrl) continue;
-
-            const clarity = cleanTitle(cand.forumTitle);
-            const lang = /telugu/i.test(cand.forumTitle) ? "TELUGU" : (/hindi/i.test(cand.forumTitle) ? "HINDI" : "TAMIL");
-
-            // EXACT Format from Isaidub technical bible to fix "Empty Box"
-            const displayTitle = `1TamilMV (${clarity.quality})
-📹: ${clarity.source} (${clarity.codec})
-📼: ${mediaTitle} (${mediaYear}) ${clarity.quality}
-💾: ${clarity.size}
-🌐: ${lang}`;
-
-            finalResults.push({
-                name: "1TamilMV",
-                title: displayTitle,
-                url: streamUrl,
-                quality: clarity.quality,
-                headers: {
-                    "User-Agent": HEADERS["User-Agent"],
-                    "Referer": cand.watchUrl
-                },
-                provider: "1tamilmv"
-            });
-        }
-
-        return finalResults;
-    } catch (error) {
-        console.error("[TamilMV] Elite Scraper Error:", error.message);
-        return [];
-    }
 }
 
-// --- Elite Export Logic ---
+// --- Export ---
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams };
+    module.exports = { getStreams: getStreams };
 } else {
-    // Crucial: The app expects an object containing the function
-    global.getStreams = { getStreams };
+    global.getStreams = { getStreams: getStreams };
 }
