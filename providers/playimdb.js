@@ -79,7 +79,7 @@ function getStreams(tmdbId, type, season, episode) {
                             /https?:\/\/[^\s"']+\.m3u8[^\s"']*/i,
                             /https?:\/\/[^\s"']+\.mp4[^\s"']*/i,
                             /(?:file|source|src|url)\s*[=:]\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i,
-                            /["'](https?:\/\/[^"']+(?:putgate|vidsrc|vsembed|cloudnestra)[^"']+)["']/i
+                            /["'](https?:\/\/[^"']+(?:putgate|vidsrc|vidsrc-embed|vidsrcme|vsrc|vsembed|cloudnestra)[^"']+)["']/i
                         ];
                         for (var i = 0; i < videoPatterns.length; i++) {
                             var m = html.match(videoPatterns[i]);
@@ -125,17 +125,17 @@ function getStreams(tmdbId, type, season, episode) {
                         provider: "playimdb"
                     });
 
-                    // Stream 2: Verified VidSrc Mirror (New Domains: vsembed.ru/su)
+                    // Stream 2: Verified VidSrc Mirror (Official API: vidsrc-embed.ru)
                     var mirrorUrl = type === 'tv' 
-                        ? "https://vsembed.ru/embed/tv/" + media.imdbId + "/" + season + "/" + episode
-                        : "https://vsembed.ru/embed/movie/" + media.imdbId;
+                        ? "https://vidsrc-embed.ru/embed/tv/" + media.imdbId + "/" + season + "-" + episode
+                        : "https://vidsrc-embed.ru/embed/movie/" + media.imdbId;
                     
                     streams.push({
                         name: "VidSrc | MIRROR | HD",
                         title: media.title + " (" + media.year + ")" + seStr + "\nSource: Vidsrc Network",
                         url: mirrorUrl,
                         quality: "HD",
-                        headers: { "Referer": "https://vsembed.ru/" },
+                        headers: { "Referer": "https://vidsrc-embed.ru/" },
                         provider: "playimdb"
                     });
 
