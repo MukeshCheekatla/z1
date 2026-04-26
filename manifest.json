@@ -17,8 +17,8 @@
     },
     { 
       "id": "playimdb",
-      "name": "PlayIMDb Trick",
-      "description": "Instant Streaming via IMDb ID Trick (VidSrc)",
+      "name": "PlayIMDb Premium",
+      "description": "High-Speed Direct Streaming (IMDb ID Extract)",
       "version": "1.1.0",
       "author": "Mukesh",
       "supportedTypes": ["movie", "tv"],
@@ -45,8 +45,8 @@
     },
     { 
       "id": "playimdb",
-      "name": "PlayIMDb Trick",
-      "description": "Instant Streaming via IMDb ID Trick (VidSrc)",
+      "name": "PlayIMDb Premium",
+      "description": "High-Speed Direct Streaming (IMDb ID Extract)",
       "version": "1.1.0",
       "author": "Mukesh",
       "supportedTypes": ["movie", "tv"],
