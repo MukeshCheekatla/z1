@@ -1,7 +1,8 @@
 {
+  "id": "mukesh.ultimate.pack",
   "name": "Nuvio Ultimate Scraper Pack",
   "version": "1.1.0",
-  "scrapers": [
+  "providers": [
     {
       "id": "tamilmv",
       "name": "1TamilMV",
@@ -12,6 +13,7 @@
       "filename": "providers/tamilmv.js",
       "enabled": true,
       "formats": ["mp4", "mkv", "m3u8"],
+      "logo": "https://www.1tamilmv.ltd/favicon.ico",
       "contentLanguage": ["ta", "te", "ml", "kn", "hi", "en"]
     },
     {
@@ -24,6 +26,7 @@
       "filename": "providers/playimdb.js",
       "enabled": true,
       "formats": ["mp4", "mkv", "m3u8"],
+      "logo": "https://www.imdb.com/favicon.ico",
       "contentLanguage": ["en", "hi"]
     }
   ]
