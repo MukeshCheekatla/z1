@@ -45,18 +45,102 @@ function getStreams(tmdbId, type, season, episode) {
             if (!media.imdbId) return [];
 
             var seStr = type === 'tv' ? " S" + String(season).padStart(2, "0") + "E" + String(episode).padStart(2, "0") : "";
-
-            // Build PlayIMDb URL — just "play" before "imdb.com"
+            
+            // Base URL for scanning
             var playUrl = "https://www.playimdb.com/title/" + media.imdbId + "/";
 
-            return [{
-                name: "PlayIMDb",
-                title: "MULTI | " + media.title + " (" + media.year + ")" + seStr,
-                url: playUrl,
-                quality: "HD",
-                headers: { "Referer": "https://www.playimdb.com/" },
-                provider: "playimdb"
-            }];
+            // Deep extraction logic to bypass redirects and "Play Button" pages
+            function extract(url, ref, depth) {
+                if (depth > 4) return Promise.resolve(url);
+                
+                var headers = { 
+                    "Referer": ref || "https://www.playimdb.com/",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+                };
+
+                return safeFetch(url, { headers: headers })
+                    .then(function(r) { return r.text(); })
+                    .then(function(html) {
+                        // A. IF TV SHOW: Find the specific episode in the "Hamburger Menu"
+                        if (type === 'tv' && depth === 0) {
+                            // More robust regex that handles attributes in any order
+                            var epMatch = html.match(new RegExp('<div[^>]+class=["\']ep[^>]+data-s=["\']' + season + '["\'][^>]+data-e=["\']' + episode + '["\'][^>]+data-iframe=["\']([^"\']+)["\']', 'i')) ||
+                                          html.match(new RegExp('<div[^>]+class=["\']ep[^>]+data-iframe=["\']([^"\']+)["\'][^>]+data-s=["\']' + season + '["\'][^>]+data-e=["\']' + episode + '["\']', 'i'));
+                            
+                            if (epMatch) {
+                                var next = epMatch[1];
+                                if (next.startsWith('/')) next = "https://www.playimdb.com" + next;
+                                return extract(next, url, depth + 1);
+                            }
+                        }
+
+                        // B. Check for direct video sources (.m3u8, .mp4, or known hosts)
+                        var videoPatterns = [
+                            /https?:\/\/[^\s"']+\.m3u8[^\s"']*/i,
+                            /https?:\/\/[^\s"']+\.mp4[^\s"']*/i,
+                            /(?:file|source|src|url)\s*[=:]\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i,
+                            /["'](https?:\/\/[^"']+(?:putgate|vidsrc|vsembed|cloudnestra)[^"']+)["']/i
+                        ];
+                        for (var i = 0; i < videoPatterns.length; i++) {
+                            var m = html.match(videoPatterns[i]);
+                            if (m) {
+                                var v = (m[1] || m[0]).replace(/\\/g, '');
+                                if (v.includes('m3u8') || v.includes('mp4') || v.includes('putgate')) return v;
+                            }
+                        }
+
+                        // C. Look for "loadIframe" style JS injections (Bypasses the "Play Button")
+                        var jsIframeMatch = html.match(/src\s*:\s*['"](\/(?:pro)?rcp\/[^'"]+)['"]/);
+                        if (jsIframeMatch) {
+                            var base = new URL(url).origin;
+                            return extract(base + jsIframeMatch[1], url, depth + 1);
+                        }
+
+                        // D. Follow standard iframes
+                        var iframeMatch = html.match(/<iframe[^>]+src=["']([^"']+)["']/i);
+                        if (iframeMatch) {
+                            var nextUrl = iframeMatch[1];
+                            if (nextUrl.startsWith('//')) nextUrl = 'https:' + nextUrl;
+                            if (nextUrl.startsWith('/')) nextUrl = new URL(url).origin + nextUrl;
+                            // Avoid infinite loops if iframe points to self
+                            if (nextUrl !== url) return extract(nextUrl, url, depth + 1);
+                        }
+
+                        return url;
+                    })
+                    .catch(function() { return url; });
+            }
+
+            return extract(playUrl, "https://www.playimdb.com/", 0)
+                .then(function(finalUrl) {
+                    var streams = [];
+                    
+                    // Stream 1: The extracted direct source
+                    streams.push({
+                        name: "PlayIMDb | MULTI | HD",
+                        title: media.title + " (" + media.year + ")" + seStr + "\nSource: Direct Player",
+                        url: finalUrl,
+                        quality: "HD",
+                        headers: { "Referer": "https://www.playimdb.com/" },
+                        provider: "playimdb"
+                    });
+
+                    // Stream 2: Verified VidSrc Mirror (New Domains: vsembed.ru/su)
+                    var mirrorUrl = type === 'tv' 
+                        ? "https://vsembed.ru/embed/tv/" + media.imdbId + "/" + season + "/" + episode
+                        : "https://vsembed.ru/embed/movie/" + media.imdbId;
+                    
+                    streams.push({
+                        name: "VidSrc | MIRROR | HD",
+                        title: media.title + " (" + media.year + ")" + seStr + "\nSource: Vidsrc Network",
+                        url: mirrorUrl,
+                        quality: "HD",
+                        headers: { "Referer": "https://vsembed.ru/" },
+                        provider: "playimdb"
+                    });
+
+                    return streams;
+                });
         })
         .catch(function() { return []; });
 }
