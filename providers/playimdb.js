@@ -1,152 +1,136 @@
 /**
- * PlayIMDb
- * How it works: add "play" before "imdb.com" in any IMDb URL
- * https://www.imdb.com/title/tt0371746/ → https://www.playimdb.com/title/tt0371746/
+ * PlayIMDb - Enhanced with Cloudnestra Decryption
+ * Based on high-performance VidSrc extraction patterns
  */
 
-var TMDB_KEY = '1b3113663c9004682ed61086cf967c44';
+const TMDB_API_KEY = '1b3113663c9004682ed61086cf967c44';
+const TMDB_BASE = 'https://api.themoviedb.org/3';
 
-function safeFetch(url, options) {
+async function safeFetch(url, options = {}) {
     if (typeof fetchv2 === 'function') {
-        var h = (options && options.headers) || {};
-        var method = (options && options.method) || 'GET';
-        var body = (options && options.body) || null;
-        return fetchv2(url, h, method, body, true, 'utf-8');
+        const headers = options.headers || {};
+        const method = options.method || 'GET';
+        const body = options.body || null;
+        try {
+            return await fetchv2(url, headers, method, body, true, options.encoding || 'utf-8');
+        } catch (e) {
+            console.error("Fetch failed:", url, e);
+        }
     }
     return fetch(url, options);
 }
 
-// Get IMDb ID + title from TMDB
-function getTMDBInfo(tmdbId, type) {
-    var url = "https://api.themoviedb.org/3/" + (type === 'tv' ? 'tv' : 'movie') + "/" + tmdbId + "?api_key=" + TMDB_KEY;
-    return safeFetch(url, {})
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            var imdbId = data.imdb_id;
-            var title = data.title || data.name;
-            var year = (data.release_date || data.first_air_date || "").split("-")[0];
-
-            // TV shows need separate call for imdb_id
-            if (!imdbId && type === 'tv') {
-                return safeFetch("https://api.themoviedb.org/3/tv/" + tmdbId + "/external_ids?api_key=" + TMDB_KEY, {})
-                    .then(function(r) { return r.json(); })
-                    .then(function(ext) {
-                        return { imdbId: ext.imdb_id, title: title, year: year };
-                    });
-            }
-            return { imdbId: imdbId, title: title, year: year };
-        })
-        .catch(function() { return { imdbId: null, title: "Unknown", year: "" }; });
+function toQualityLabel(text) {
+    const val = String(text || '').toLowerCase();
+    if (val.includes('2160') || val.includes('4k')) return '2160p';
+    if (val.includes('1440')) return '1440p';
+    if (val.includes('1080')) return '1080p';
+    if (val.includes('720')) return '720p';
+    return 'HD';
 }
 
-function getStreams(tmdbId, type, season, episode) {
-    return getTMDBInfo(tmdbId, type)
-        .then(function(media) {
-            if (!media.imdbId) return [];
+async function getImdbId(tmdbId, type) {
+    const url = `${TMDB_BASE}/${type === 'tv' ? 'tv' : 'movie'}/${tmdbId}?api_key=${TMDB_API_KEY}`;
+    const res = await safeFetch(url);
+    const data = res && res.ok ? await res.json() : null;
+    if (!data) return null;
 
-            var seStr = type === 'tv' ? " S" + String(season).padStart(2, "0") + "E" + String(episode).padStart(2, "0") : "";
-            
-            // Base URL for scanning
-            var playUrl = "https://www.playimdb.com/title/" + media.imdbId + "/";
+    if (type === 'movie') return data.imdb_id;
+    
+    // TV needs external_ids call
+    const extRes = await safeFetch(`${TMDB_BASE}/tv/${tmdbId}/external_ids?api_key=${TMDB_API_KEY}`);
+    const ext = extRes && extRes.ok ? await extRes.json() : null;
+    return ext ? ext.imdb_id : null;
+}
 
-            // Deep extraction logic to bypass redirects and "Play Button" pages
-            function extract(url, ref, depth) {
-                if (depth > 4) return Promise.resolve(url);
-                
-                var headers = { 
-                    "Referer": ref || "https://www.playimdb.com/",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                };
+async function resolveDirectStreams(imdbId, type, season, episode) {
+    const playUrl = `https://www.playimdb.com/title/${imdbId}/`;
+    const seStr = type === 'tv' ? ` S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}` : "";
 
-                return safeFetch(url, { headers: headers })
-                    .then(function(r) { return r.text(); })
-                    .then(function(html) {
-                        // A. IF TV SHOW: Find the specific episode in the "Hamburger Menu"
-                        if (type === 'tv' && depth === 0) {
-                            // More robust regex that handles attributes in any order
-                            var epMatch = html.match(new RegExp('<div[^>]+class=["\']ep[^>]+data-s=["\']' + season + '["\'][^>]+data-e=["\']' + episode + '["\'][^>]+data-iframe=["\']([^"\']+)["\']', 'i')) ||
-                                          html.match(new RegExp('<div[^>]+class=["\']ep[^>]+data-iframe=["\']([^"\']+)["\'][^>]+data-s=["\']' + season + '["\'][^>]+data-e=["\']' + episode + '["\']', 'i'));
-                            
-                            if (epMatch) {
-                                var next = epMatch[1];
-                                if (next.startsWith('/')) next = "https://www.playimdb.com" + next;
-                                return extract(next, url, depth + 1);
-                            }
-                        }
+    // 1. Fetch PlayIMDb landing
+    const res = await safeFetch(playUrl);
+    const html = res && res.ok ? await res.text() : '';
+    
+    // 2. Handle TV menu if needed (find correct episode iframe)
+    let targetUrl = playUrl;
+    if (type === 'tv') {
+        const epMatch = html.match(new RegExp(`<div[^>]+class=["']ep[^>]+data-s=["']${season}["'][^>]+data-e=["']${episode}["'][^>]+data-iframe=["']([^"']+)["']`, 'i')) ||
+                        html.match(new RegExp(`<div[^>]+class=["']ep[^>]+data-iframe=["']([^"']+)["'][^>]+data-s=["']${season}["'][^>]+data-e=["']${episode}["']`, 'i'));
+        if (epMatch) {
+            targetUrl = epMatch[1].startsWith('/') ? `https://www.playimdb.com${epMatch[1]}` : epMatch[1];
+        }
+    }
 
-                        // B. Check for direct video sources (.m3u8, .mp4, or known hosts)
-                        var videoPatterns = [
-                            /https?:\/\/[^\s"']+\.m3u8[^\s"']*/i,
-                            /https?:\/\/[^\s"']+\.mp4[^\s"']*/i,
-                            /(?:file|source|src|url)\s*[=:]\s*["']([^"']+\.(?:m3u8|mp4)[^"']*)["']/i,
-                            /["'](https?:\/\/[^"']+(?:putgate|vidsrc|vidsrc-embed|vidsrcme|vsrc|vsembed|cloudnestra)[^"']+)["']/i
-                        ];
-                        for (var i = 0; i < videoPatterns.length; i++) {
-                            var m = html.match(videoPatterns[i]);
-                            if (m) {
-                                var v = (m[1] || m[0]).replace(/\\/g, '');
-                                if (v.includes('m3u8') || v.includes('mp4') || v.includes('putgate')) return v;
-                            }
-                        }
+    // 3. Extract Cloudnestra iframe
+    const pageRes = await safeFetch(targetUrl, { headers: { Referer: 'https://www.playimdb.com/' } });
+    const pageHtml = pageRes && pageRes.ok ? await pageRes.text() : '';
+    const iframeSrc = (pageHtml.match(/<iframe[^>]+src=["']([^"']+)["']/) || [])[1];
+    if (!iframeSrc) return [];
 
-                        // C. Look for "loadIframe" style JS injections (Bypasses the "Play Button")
-                        var jsIframeMatch = html.match(/src\s*:\s*['"](\/(?:pro)?rcp\/[^'"]+)['"]/);
-                        if (jsIframeMatch) {
-                            var base = new URL(url).origin;
-                            return extract(base + jsIframeMatch[1], url, depth + 1);
-                        }
+    const cloudBase = "https:" + (iframeSrc.startsWith('//') ? iframeSrc : (iframeSrc.startsWith('/') ? iframeSrc : "//" + iframeSrc));
+    
+    // 4. Follow to prorcp layer
+    const cloudRes = await safeFetch(cloudBase, { headers: { Referer: targetUrl } });
+    const cloudHtml = cloudRes && cloudRes.ok ? await cloudRes.text() : '';
+    const prorcpMatch = cloudHtml.match(/src\s*:\s*['"](\/prorcp\/[^'"]+)['"]/);
+    if (!prorcpMatch) return [];
 
-                        // D. Follow standard iframes
-                        var iframeMatch = html.match(/<iframe[^>]+src=["']([^"']+)["']/i);
-                        if (iframeMatch) {
-                            var nextUrl = iframeMatch[1];
-                            if (nextUrl.startsWith('//')) nextUrl = 'https:' + nextUrl;
-                            if (nextUrl.startsWith('/')) nextUrl = new URL(url).origin + nextUrl;
-                            // Avoid infinite loops if iframe points to self
-                            if (nextUrl !== url) return extract(nextUrl, url, depth + 1);
-                        }
+    const prorcpUrl = new URL(cloudBase).origin + prorcpMatch[1];
+    const finalRes = await safeFetch(prorcpUrl, { headers: { Referer: cloudBase } });
+    const finalHtml = finalRes && finalRes.ok ? await finalRes.text() : '';
 
-                        return url;
-                    })
-                    .catch(function() { return url; });
-            }
+    // 5. DECRYPTION: Find hidden div and post to dec-cloudnestra
+    const hidden = finalHtml.match(/<div id="([^"]+)"[^>]*style=["']display\s*:\s*none;?["'][^>]*>([a-zA-Z0-9:\/.,{}\-_=+ ]+)<\/div>/);
+    if (hidden) {
+        const divId = hidden[1];
+        const divText = hidden[2];
+        const decRes = await safeFetch('https://enc-dec.app/api/dec-cloudnestra', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: divText, div_id: divId })
+        });
+        const decJson = decRes && decRes.ok ? await decRes.json() : null;
+        const urls = decJson && Array.isArray(decJson.result) ? decJson.result : [];
 
-            return extract(playUrl, "https://www.playimdb.com/", 0)
-                .then(function(finalUrl) {
-                    var streams = [];
-                    
-                    // Stream 1: The extracted direct source
-                    streams.push({
-                        name: "PlayIMDb | MULTI | HD",
-                        title: media.title + " (" + media.year + ")" + seStr + "\nSource: Direct Player",
-                        url: finalUrl,
-                        quality: "HD",
-                        headers: { "Referer": "https://www.playimdb.com/" },
-                        provider: "playimdb"
-                    });
+        if (urls.length > 0) {
+            return urls.map((url, idx) => ({
+                name: `PlayIMDb | Server ${idx + 1} | HD`,
+                title: `Source: Direct Content\nQuality: ${toQualityLabel(url)}`,
+                url: url,
+                quality: toQualityLabel(url),
+                headers: { Referer: 'https://cloudnestra.com/' },
+                provider: 'playimdb'
+            }));
+        }
+    }
 
-                    // Stream 2: Verified VidSrc Mirror (Official API: vidsrc-embed.ru)
-                    var mirrorUrl = type === 'tv' 
-                        ? "https://vidsrc-embed.ru/embed/tv/" + media.imdbId + "/" + season + "-" + episode
-                        : "https://vidsrc-embed.ru/embed/movie/" + media.imdbId;
-                    
-                    streams.push({
-                        name: "VidSrc | MIRROR | HD",
-                        title: media.title + " (" + media.year + ")" + seStr + "\nSource: Vidsrc Network",
-                        url: mirrorUrl,
-                        quality: "HD",
-                        headers: { "Referer": "https://vidsrc-embed.ru/" },
-                        provider: "playimdb"
-                    });
+    // Fallback: Return the Mirror from the official VidSrc API
+    const mirrorUrl = type === 'tv' 
+        ? `https://vidsrc-embed.ru/embed/tv/${imdbId}/${season}-${episode}`
+        : `https://vidsrc-embed.ru/embed/movie/${imdbId}`;
 
-                    return streams;
-                });
-        })
-        .catch(function() { return []; });
+    return [{
+        name: "VidSrc | MIRROR | HD",
+        title: "Source: Vidsrc Network\nFallback Embed",
+        url: mirrorUrl,
+        quality: "HD",
+        headers: { Referer: "https://vidsrc-embed.ru/" },
+        provider: "playimdb"
+    }];
+}
+
+async function getStreams(tmdbId, type, season, episode) {
+    try {
+        const imdbId = await getImdbId(tmdbId, type);
+        if (!imdbId) return [];
+        return await resolveDirectStreams(imdbId, type, season, episode);
+    } catch (e) {
+        return [];
+    }
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams: getStreams };
+    module.exports = { getStreams };
 } else {
     global.getStreams = getStreams;
 }
