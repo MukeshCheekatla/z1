@@ -1,9 +1,8 @@
 {
-  "id": "mukesh.ultimate.pack",
-  "name": "Nuvio Ultimate Scraper Pack",
-  "version": "1.1.0",
-  "providers": [
-    {
+  "name": "Mukesh Ultimate",
+  "version": "1.0.0",
+  "scrapers": [
+    { 
       "id": "tamilmv",
       "name": "1TamilMV",
       "description": "Premium South Indian Streaming (Forum Extract)",
@@ -16,7 +15,35 @@
       "logo": "https://www.1tamilmv.ltd/favicon.ico",
       "contentLanguage": ["ta", "te", "ml", "kn", "hi", "en"]
     },
-    {
+    { 
+      "id": "playimdb",
+      "name": "PlayIMDb Trick",
+      "description": "Instant Streaming via IMDb ID Trick",
+      "version": "1.0.0",
+      "author": "Mukesh",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/playimdb.js",
+      "enabled": true,
+      "formats": ["mp4", "mkv", "m3u8"],
+      "logo": "https://www.imdb.com/favicon.ico",
+      "contentLanguage": ["en", "hi"]
+    }
+  ],
+  "providers": [
+    { 
+      "id": "tamilmv",
+      "name": "1TamilMV",
+      "description": "Premium South Indian Streaming (Forum Extract)",
+      "version": "1.2.0",
+      "author": "Mukesh",
+      "supportedTypes": ["movie", "tv"],
+      "filename": "providers/tamilmv.js",
+      "enabled": true,
+      "formats": ["mp4", "mkv", "m3u8"],
+      "logo": "https://www.1tamilmv.ltd/favicon.ico",
+      "contentLanguage": ["ta", "te", "ml", "kn", "hi", "en"]
+    },
+    { 
       "id": "playimdb",
       "name": "PlayIMDb Trick",
       "description": "Instant Streaming via IMDb ID Trick",
