@@ -29,23 +29,31 @@ function toQualityLabel(text) {
     return 'HD';
 }
 
-async function getImdbId(tmdbId, type) {
+async function getTMDBInfo(tmdbId, type) {
     const url = `${TMDB_BASE}/${type === 'tv' ? 'tv' : 'movie'}/${tmdbId}?api_key=${TMDB_API_KEY}`;
     const res = await safeFetch(url);
     const data = res && res.ok ? await res.json() : null;
     if (!data) return null;
 
-    if (type === 'movie') return data.imdb_id;
-    
-    // TV needs external_ids call
-    const extRes = await safeFetch(`${TMDB_BASE}/tv/${tmdbId}/external_ids?api_key=${TMDB_API_KEY}`);
-    const ext = extRes && extRes.ok ? await extRes.json() : null;
-    return ext ? ext.imdb_id : null;
+    const info = {
+        title: data.title || data.name,
+        year: (data.release_date || data.first_air_date || "").split("-")[0],
+        imdbId: data.imdb_id
+    };
+
+    if (!info.imdbId && type === 'tv') {
+        const extRes = await safeFetch(`${TMDB_BASE}/tv/${tmdbId}/external_ids?api_key=${TMDB_API_KEY}`);
+        const ext = extRes && extRes.ok ? await extRes.json() : null;
+        if (ext) info.imdbId = ext.imdb_id;
+    }
+    return info;
 }
 
-async function resolveDirectStreams(imdbId, type, season, episode) {
+async function resolveDirectStreams(media, type, season, episode) {
+    const imdbId = media.imdbId;
     const playUrl = `https://www.playimdb.com/title/${imdbId}/`;
     const seStr = type === 'tv' ? ` S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}` : "";
+    const mediaTitle = `${media.title || "Unknown"} (${media.year || "N/A"})${seStr}`;
 
     // 1. Fetch PlayIMDb landing
     const res = await safeFetch(playUrl);
@@ -65,42 +73,46 @@ async function resolveDirectStreams(imdbId, type, season, episode) {
     const pageRes = await safeFetch(targetUrl, { headers: { Referer: 'https://www.playimdb.com/' } });
     const pageHtml = pageRes && pageRes.ok ? await pageRes.text() : '';
     const iframeSrc = (pageHtml.match(/<iframe[^>]+src=["']([^"']+)["']/) || [])[1];
-    if (!iframeSrc) return [];
+    if (iframeSrc) {
+        const cloudBase = "https:" + (iframeSrc.startsWith('//') ? iframeSrc : (iframeSrc.startsWith('/') ? iframeSrc : "//" + iframeSrc));
+        
+        // 4. Follow to prorcp layer
+        const cloudRes = await safeFetch(cloudBase, { headers: { Referer: targetUrl } });
+        const cloudHtml = cloudRes && cloudRes.ok ? await cloudRes.text() : '';
+        const prorcpMatch = cloudHtml.match(/src\s*:\s*['"](\/prorcp\/[^'"]+)['"]/);
+        
+        if (prorcpMatch) {
+            const prorcpUrl = new URL(cloudBase).origin + prorcpMatch[1];
+            const finalRes = await safeFetch(prorcpUrl, { headers: { Referer: cloudBase } });
+            const finalHtml = finalRes && finalRes.ok ? await finalRes.text() : '';
 
-    const cloudBase = "https:" + (iframeSrc.startsWith('//') ? iframeSrc : (iframeSrc.startsWith('/') ? iframeSrc : "//" + iframeSrc));
-    
-    // 4. Follow to prorcp layer
-    const cloudRes = await safeFetch(cloudBase, { headers: { Referer: targetUrl } });
-    const cloudHtml = cloudRes && cloudRes.ok ? await cloudRes.text() : '';
-    const prorcpMatch = cloudHtml.match(/src\s*:\s*['"](\/prorcp\/[^'"]+)['"]/);
-    if (!prorcpMatch) return [];
+            // 5. DECRYPTION: Find hidden div and post to dec-cloudnestra
+            const hidden = finalHtml.match(/<div id="([^"]+)"[^>]*style=["']display\s*:\s*none;?["'][^>]*>([a-zA-Z0-9:\/.,{}\-_=+ ]+)<\/div>/);
+            if (hidden) {
+                const divId = hidden[1];
+                const divText = hidden[2];
+                const decRes = await safeFetch('https://enc-dec.app/api/dec-cloudnestra', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: divText, div_id: divId })
+                });
+                const decJson = decRes && decRes.ok ? await decRes.json() : null;
+                const urls = decJson && Array.isArray(decJson.result) ? decJson.result : [];
 
-    const prorcpUrl = new URL(cloudBase).origin + prorcpMatch[1];
-    const finalRes = await safeFetch(prorcpUrl, { headers: { Referer: cloudBase } });
-    const finalHtml = finalRes && finalRes.ok ? await finalRes.text() : '';
-
-    // 5. DECRYPTION: Find hidden div and post to dec-cloudnestra
-    const hidden = finalHtml.match(/<div id="([^"]+)"[^>]*style=["']display\s*:\s*none;?["'][^>]*>([a-zA-Z0-9:\/.,{}\-_=+ ]+)<\/div>/);
-    if (hidden) {
-        const divId = hidden[1];
-        const divText = hidden[2];
-        const decRes = await safeFetch('https://enc-dec.app/api/dec-cloudnestra', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: divText, div_id: divId })
-        });
-        const decJson = decRes && decRes.ok ? await decRes.json() : null;
-        const urls = decJson && Array.isArray(decJson.result) ? decJson.result : [];
-
-        if (urls.length > 0) {
-            return urls.map((url, idx) => ({
-                name: `PlayIMDb | Server ${idx + 1} | HD`,
-                title: `Source: Direct Content\nQuality: ${toQualityLabel(url)}`,
-                url: url,
-                quality: toQualityLabel(url),
-                headers: { Referer: 'https://cloudnestra.com/' },
-                provider: 'playimdb'
-            }));
+                if (urls.length > 0) {
+                    return urls.map((url, idx) => {
+                        const quality = toQualityLabel(url);
+                        return {
+                            name: `PlayIMDb | Server ${idx + 1}`,
+                            title: `${mediaTitle} - ${quality} [Direct]`,
+                            url: url,
+                            quality: quality,
+                            headers: { Referer: 'https://cloudnestra.com/' },
+                            provider: 'playimdb'
+                        };
+                    });
+                }
+            }
         }
     }
 
@@ -110,8 +122,8 @@ async function resolveDirectStreams(imdbId, type, season, episode) {
         : `https://vidsrc-embed.ru/embed/movie/${imdbId}`;
 
     return [{
-        name: "VidSrc | MIRROR | HD",
-        title: "Source: Vidsrc Network\nFallback Embed",
+        name: "VidSrc | MIRROR",
+        title: `${mediaTitle} - HD [Mirror]`,
         url: mirrorUrl,
         quality: "HD",
         headers: { Referer: "https://vidsrc-embed.ru/" },
@@ -121,9 +133,9 @@ async function resolveDirectStreams(imdbId, type, season, episode) {
 
 async function getStreams(tmdbId, type, season, episode) {
     try {
-        const imdbId = await getImdbId(tmdbId, type);
-        if (!imdbId) return [];
-        return await resolveDirectStreams(imdbId, type, season, episode);
+        const media = await getTMDBInfo(tmdbId, type);
+        if (!media || !media.imdbId) return [];
+        return await resolveDirectStreams(media, type, season, episode);
     } catch (e) {
         return [];
     }
