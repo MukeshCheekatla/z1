@@ -1,6 +1,6 @@
 /**
- * PlayIMDb - Hermes-Bulletproof Edition
- * NO async/await (Pure Promises) to prevent Nuvio crashes
+ * PlayIMDb - Elite Edition
+ * Fixed for Avatar & older titles
  */
 
 // --- Polyfills ---
@@ -22,35 +22,37 @@ function atob(v) {
 var TMDB_KEY = '1b3113663c9004682ed61086cf967c44';
 
 function getStreams(tmdbId, type, season, episode) {
-    var url = "https://api.themoviedb.org/3/" + (type === 'movie' ? 'movie' : 'tv') + "/" + tmdbId + "?api_key=" + TMDB_KEY + "&append_to_response=external_ids";
+    var url = "https://api.themoviedb.org/3/" + (type === 'movie' ? 'movie' : 'tv') + "/" + tmdbId + "?api_key=" + TMDB_KEY;
 
     return fetch(url)
         .then(function(r) { return r.json(); })
         .then(function(data) {
-            var id = data.external_ids && data.external_ids.imdb_id ? data.external_ids.imdb_id : tmdbId;
+            var imdbId = data.imdb_id;
             var title = data.title || data.name;
             var year = (data.release_date || data.first_air_date || "").split("-")[0];
-            var se = type === 'tv' ? " S" + season + "E" + episode : "";
+            var seStr = type === 'tv' ? " S" + season + "E" + episode : "";
 
-            var sources = [
-                { n: "VidSrc (Premium)", u: type === 'movie' ? "https://vidsrc.me/embed/movie?imdb=" + id : "https://vidsrc.me/embed/tv?imdb=" + id + "&sea=" + season + "&epi=" + episode },
-                { n: "VidSrc.pro", u: type === 'movie' ? "https://vidsrc.pro/embed/movie/" + id : "https://vidsrc.pro/embed/tv/" + id + "/" + season + "/" + episode },
-                { n: "VidSrc.to", u: type === 'movie' ? "https://vidsrc.to/embed/movie/" + id : "https://vidsrc.to/embed/tv/" + id + "/" + season + "/" + episode }
-            ];
+            if (!imdbId && data.external_ids) imdbId = data.external_ids.imdb_id;
+            if (!imdbId) return [];
 
-            return sources.map(function(s) {
-                return {
+            return [
+                {
                     name: "PlayIMDb",
-                    title: s.n + " (HD)\n📹: WEB-DL (Multi-Audio)\n📼: " + title + " (" + year + ")" + se + "\n🌐: MULTI-LANGUAGE",
-                    url: s.u,
-                    quality: "1080p",
-                    headers: { "Referer": "https://vidsrc.me/", "User-Agent": "Mozilla/5.0" },
+                    title: "PlayIMDb (Multi)\n\u1F4F9: WEB-Stream\n\u1F4FC: " + title + " (" + year + ")" + seStr + "\n\u1F4BE: Cloud-Play\n\u1F310: MULTI-AUDIO",
+                    url: "https://www.playimdb.com/title/" + imdbId + "/",
+                    quality: "MULTI",
                     provider: "playimdb"
-                };
-            });
+                },
+                {
+                    name: "VidSrc",
+                    title: "VidSrc (HD)\n\u1F4F9: WEB-DL\n\u1F4FC: " + title + " (" + year + ")" + seStr + "\n\u1F4BE: Auto-Scale\n\u1F310: ENGLISH",
+                    url: "https://vidsrc.me/embed/" + imdbId + "/",
+                    quality: "HD",
+                    provider: "vidsrc"
+                }
+            ];
         })
-        .catch(function(e) {
-            console.error("PlayIMDb Error:", e);
+        .catch(function() {
             return [];
         });
 }

@@ -1,6 +1,6 @@
 /**
- * 1TamilMV - Hermes-Bulletproof Edition
- * NO async/await (Pure Promises) to prevent Nuvio crashes
+ * 1TamilMV - Elite [W] Search Edition
+ * Fixed for Avatar & older titles
  */
 
 const cheerio = require('cheerio-without-node-native');
@@ -22,89 +22,87 @@ function atob(v) {
 
 // --- Config ---
 var TMDB_KEY = '1b3113663c9004682ed61086cf967c44';
-var MAIN_URL = 'https://www.1tamilmv.lc';
+var MAIN_URL = 'https://www.1tamilmv.ltd';
 var HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "Referer": MAIN_URL + "/"
 };
 
-// --- Helpers ---
-
-function cleanTitle(t) {
-    var m = t.match(/\[(.*?)\]/);
-    if (!m) return { q: "HD", s: "Cloud", c: "AVC" };
-    var p = m[1].split("-");
-    return {
-        q: p[0].trim() || "HD",
-        s: (p.find(function(x){ return x.includes("GB") || x.includes("MB") }) || "Unknown").trim(),
-        c: (p.find(function(x){ return /AVC|HEVC|x264|x265/i.test(x) }) || "AVC").trim()
-    };
-}
-
-function extractStream(url) {
-    return fetch(url, { headers: HEADERS })
-        .then(function(r) { return r.text(); })
-        .then(function(h) {
-            var m = h.match(/https?:\/\/[^\s"']+\.m3u8[^\s"']*/i) || h.match(/https?:\/\/[^\s"']+\.mp4[^\s"']*/i);
-            return m ? m[0].replace(/\\/g, '') : null;
-        })
-        .catch(function() { return null; });
-}
-
-// --- Main Engine ---
-
 function getStreams(tmdbId, type, season, episode) {
-    var url = "https://api.themoviedb.org/3/" + (type === 'movie' ? 'movie' : 'tv') + "/" + tmdbId + "?api_key=" + TMDB_KEY;
+    var tmdbUrl = "https://api.themoviedb.org/3/" + (type === 'movie' ? 'movie' : 'tv') + "/" + tmdbId + "?api_key=" + TMDB_KEY;
     
-    return fetch(url)
+    return fetch(tmdbUrl)
         .then(function(r) { return r.json(); })
-        .then(function(data) {
-            var title = data.title || data.name;
-            var year = (data.release_date || data.first_air_date || "").split("-")[0];
-            
-            // Search multiple categories (Homepage + Archives)
-            var targets = [MAIN_URL, MAIN_URL + "/index.php?/forums/forum/11-tamil-new-movies/"];
-            
-            return Promise.all(targets.map(function(t) {
-                return fetch(t, { headers: HEADERS }).then(function(r) { return r.text(); });
-            })).then(function(pages) {
-                var streams = [];
-                var matches = [];
-                
-                pages.forEach(function(html) {
+        .then(function(mediaInfo) {
+            var title = mediaInfo.title || mediaInfo.name;
+            var year = (mediaInfo.release_date || mediaInfo.first_air_date || "").split("-")[0];
+            var query = title + (year ? " " + year : "");
+            var searchUrl = MAIN_URL + "/search/?q=" + encodeURIComponent(query) + "&quicksearch=1";
+
+            return fetch(searchUrl, { headers: HEADERS })
+                .then(function(r) { return r.text(); })
+                .then(function(html) {
                     var $ = cheerio.load(html);
-                    $('a:contains("[WATCH]")').each(function() {
-                        var watchUrl = $(this).attr("href");
-                        var text = $(this).parent().text() || $(this).text();
-                        if (text.toLowerCase().indexOf(title.toLowerCase()) !== -1) {
-                            matches.push({ t: text, u: watchUrl });
+                    var watchLinks = [];
+                    
+                    $("a").each(function() {
+                        var text = $(this).text().trim();
+                        var href = $(this).attr("href");
+                        if (text === "[W]" && href) {
+                            var parentLi = $(this).closest("li");
+                            var topicTitle = parentLi.find('a[href*="/forums/topic/"]').first().text().trim() || title;
+                            watchLinks.push({ t: topicTitle, u: href });
                         }
                     });
-                });
 
-                // Extract first 3 matches
-                return Promise.all(matches.slice(0, 3).map(function(m) {
-                    return extractStream(m.u).then(function(finalUrl) {
-                        if (!finalUrl) return null;
-                        var info = cleanTitle(m.t);
-                        return {
-                            name: "1TamilMV",
-                            title: "1TamilMV (" + info.q + ")\n📹: " + info.c + "\n📼: " + title + " (" + year + ")\n💾: " + info.s,
-                            url: finalUrl,
-                            quality: info.q,
-                            headers: { "User-Agent": HEADERS["User-Agent"], "Referer": m.u }
-                        };
-                    });
-                }));
-            });
+                    // If search failed, try homepage scouting as fallback
+                    if (watchLinks.length === 0) {
+                        return fetch(MAIN_URL, { headers: HEADERS })
+                            .then(function(r) { return r.text(); })
+                            .then(function(homeHtml) {
+                                var $h = cheerio.load(homeHtml);
+                                $h('a:contains("[WATCH]")').each(function() {
+                                    var u = $h(this).attr("href");
+                                    var t = $h(this).parent().text() || title;
+                                    if (t.toLowerCase().indexOf(title.toLowerCase()) !== -1) {
+                                        watchLinks.push({ t: t, u: u });
+                                    }
+                                });
+                                return watchLinks;
+                            });
+                    }
+                    return watchLinks;
+                })
+                .then(function(links) {
+                    return Promise.all(links.slice(0, 5).map(function(link) {
+                        return fetch(link.u, { headers: HEADERS })
+                            .then(function(r) { return r.text(); })
+                            .then(function(h) {
+                                var m = h.match(/https?:\/\/[^\s"']+\.m3u8[^\s"']*/i) || h.match(/https?:\/\/[^\s"']+\.mp4[^\s"']*/i);
+                                if (!m) return null;
+                                
+                                var finalUrl = m[0].replace(/\\/g, '');
+                                var qMatch = link.t.match(/\b(1080p|720p|480p|4K)\b/i);
+                                var quality = qMatch ? qMatch[0].toUpperCase() : "HD";
+                                var sMatch = link.t.match(/(\d+(?:\.\d+)?\s*(?:GB|MB))/i);
+                                var size = sMatch ? sMatch[1] : "Cloud";
+                                
+                                return {
+                                    name: "1TamilMV",
+                                    title: "1TamilMV (" + quality + ")\n\u1F4F9: WEB-DL\n\u1F4FC: " + title + " (" + year + ")\n\u1F4BE: " + size + "\n\u1F310: TAMIL",
+                                    url: finalUrl,
+                                    quality: quality,
+                                    headers: { "User-Agent": HEADERS["User-Agent"], "Referer": link.u },
+                                    provider: "1tamilmv"
+                                };
+                            }).catch(function(){ return null; });
+                    }));
+                });
         })
-        .then(function(results) {
-            return results.filter(function(x) { return x !== null; });
+        .then(function(res) {
+            return res.filter(function(x) { return x !== null; });
         })
-        .catch(function(e) {
-            console.error("TamilMV Error:", e);
-            return [];
-        });
+        .catch(function() { return []; });
 }
 
 // --- Export ---
