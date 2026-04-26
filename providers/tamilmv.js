@@ -89,7 +89,7 @@ function getStreams(tmdbId, type, season, episode) {
                                 
                                 return {
                                     name: "1TamilMV",
-                                    title: "1TamilMV (" + quality + ")\n\u1F4F9: WEB-DL\n\u1F4FC: " + title + " (" + year + ")\n\u1F4BE: " + size + "\n\u1F310: TAMIL",
+                                    title: "1TamilMV (" + quality + ")\n\u{1F4F9}: WEB-DL\n\u{1F4FC}: " + title + " (" + year + ")\n\u{1F4BE}: " + size + "\n\u{1F310}: TAMIL",
                                     url: finalUrl,
                                     quality: quality,
                                     headers: { "User-Agent": HEADERS["User-Agent"], "Referer": link.u },

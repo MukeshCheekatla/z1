@@ -38,14 +38,14 @@ function getStreams(tmdbId, type, season, episode) {
             return [
                 {
                     name: "PlayIMDb",
-                    title: "PlayIMDb (Multi)\n\u1F4F9: WEB-Stream\n\u1F4FC: " + title + " (" + year + ")" + seStr + "\n\u1F4BE: Cloud-Play\n\u1F310: MULTI-AUDIO",
+                    title: "PlayIMDb (Multi)\n\u{1F4F9}: WEB-Stream\n\u{1F4FC}: " + title + " (" + year + ")" + seStr + "\n\u{1F4BE}: Cloud-Play\n\u{1F310}: MULTI-AUDIO",
                     url: "https://www.playimdb.com/title/" + imdbId + "/",
                     quality: "MULTI",
                     provider: "playimdb"
                 },
                 {
                     name: "VidSrc",
-                    title: "VidSrc (HD)\n\u1F4F9: WEB-DL\n\u1F4FC: " + title + " (" + year + ")" + seStr + "\n\u1F4BE: Auto-Scale\n\u1F310: ENGLISH",
+                    title: "VidSrc (HD)\n\u{1F4F9}: WEB-DL\n\u{1F4FC}: " + title + " (" + year + ")" + seStr + "\n\u{1F4BE}: Auto-Scale\n\u1F310: ENGLISH",
                     url: "https://vidsrc.me/embed/" + imdbId + "/",
                     quality: "HD",
                     provider: "vidsrc"
