@@ -62,10 +62,15 @@ async function resolveDirectStreams(media, type, season, episode) {
     // 2. Handle TV menu if needed (find correct episode iframe)
     let targetUrl = playUrl;
     if (type === 'tv') {
-        const epMatch = html.match(new RegExp(`<div[^>]+class=["']ep[^>]+data-s=["']${season}["'][^>]+data-e=["']${episode}["'][^>]+data-iframe=["']([^"']+)["']`, 'i')) ||
-                        html.match(new RegExp(`<div[^>]+class=["']ep[^>]+data-iframe=["']([^"']+)["'][^>]+data-s=["']${season}["'][^>]+data-e=["']${episode}["']`, 'i'));
-        if (epMatch) {
-            targetUrl = epMatch[1].startsWith('/') ? `https://www.playimdb.com${epMatch[1]}` : epMatch[1];
+        const epDivs = html.match(/<div[^>]+class=["']ep[^>]*>.*?<\/div>/gi) || [];
+        for (const div of epDivs) {
+            if (div.includes(`data-s="${season}"`) && div.includes(`data-e="${episode}"`)) {
+                const iMatch = div.match(/data-iframe=["']([^"']+)["']/i);
+                if (iMatch) {
+                    targetUrl = iMatch[1].startsWith('/') ? `https://www.playimdb.com${iMatch[1]}` : iMatch[1];
+                }
+                break;
+            }
         }
     }
 
