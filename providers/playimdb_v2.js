@@ -1,14 +1,17 @@
 /**
- * PlayIMDb - Enhanced with Cloudnestra Decryption
- * Based on high-performance VidSrc extraction patterns
+ * PlayIMDb V2 - Updated to use streamimdb.me
+ * Enhanced with Cloudnestra Decryption
  */
 
 const TMDB_API_KEY = '1b3113663c9004682ed61086cf967c44';
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 
 async function safeFetch(url, options = {}) {
+    const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        ...(options.headers || {})
+    };
     if (typeof fetchv2 === 'function') {
-        const headers = options.headers || {};
         const method = options.method || 'GET';
         const body = options.body || null;
         try {
@@ -17,7 +20,7 @@ async function safeFetch(url, options = {}) {
             console.error("Fetch failed:", url, e);
         }
     }
-    return fetch(url, options);
+    return fetch(url, { ...options, headers });
 }
 
 function toQualityLabel(text) {
@@ -51,15 +54,17 @@ async function getTMDBInfo(tmdbId, type) {
 
 async function resolveDirectStreams(media, type, season, episode) {
     const imdbId = media.imdbId;
-    const playUrl = `https://www.playimdb.com/title/${imdbId}/`;
+    // Updated base URL to streamimdb.me
+    const baseUrl = "https://streamimdb.me";
+    const playUrl = `${baseUrl}/embed/${imdbId}/`;
     const seStr = type === 'tv' ? ` S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}` : "";
     const mediaTitle = `${media.title || "Unknown"} (${media.year || "N/A"})${seStr}`;
 
-    // 1. Fetch PlayIMDb landing
+    // 1. Fetch Landing page
     const res = await safeFetch(playUrl);
     const html = res && res.ok ? await res.text() : '';
     
-    // 2. Handle TV menu if needed (find correct episode iframe)
+    // 2. Handle TV menu if needed
     let targetUrl = playUrl;
     if (type === 'tv') {
         const epDivs = html.match(/<div[^>]+class=["']ep[^>]*>.*?<\/div>/gi) || [];
@@ -67,7 +72,7 @@ async function resolveDirectStreams(media, type, season, episode) {
             if (div.includes(`data-s="${season}"`) && div.includes(`data-e="${episode}"`)) {
                 const iMatch = div.match(/data-iframe=["']([^"']+)["']/i);
                 if (iMatch) {
-                    targetUrl = iMatch[1].startsWith('/') ? `https://www.playimdb.com${iMatch[1]}` : iMatch[1];
+                    targetUrl = iMatch[1].startsWith('/') ? `${baseUrl}${iMatch[1]}` : iMatch[1];
                 }
                 break;
             }
@@ -75,23 +80,26 @@ async function resolveDirectStreams(media, type, season, episode) {
     }
 
     // 3. Extract Cloudnestra iframe
-    const pageRes = await safeFetch(targetUrl, { headers: { Referer: 'https://www.playimdb.com/' } });
+    const pageRes = await safeFetch(targetUrl, { headers: { Referer: baseUrl + '/' } });
     const pageHtml = pageRes && pageRes.ok ? await pageRes.text() : '';
     const iframeSrc = (pageHtml.match(/<iframe[^>]+src=["']([^"']+)["']/) || [])[1];
     if (iframeSrc) {
-        const cloudBase = "https:" + (iframeSrc.startsWith('//') ? iframeSrc : (iframeSrc.startsWith('/') ? iframeSrc : "//" + iframeSrc));
+        const cloudBase = (iframeSrc.startsWith('//') ? "https:" + iframeSrc : (iframeSrc.startsWith('/') ? baseUrl + iframeSrc : iframeSrc));
         
         // 4. Follow to prorcp layer
         const cloudRes = await safeFetch(cloudBase, { headers: { Referer: targetUrl } });
         const cloudHtml = cloudRes && cloudRes.ok ? await cloudRes.text() : '';
-        const prorcpMatch = cloudHtml.match(/src\s*:\s*['"](\/prorcp\/[^'"]+)['"]/);
         
-        if (prorcpMatch) {
-            const prorcpUrl = new URL(cloudBase).origin + prorcpMatch[1];
+        // Sometimes it's in a script: loadIframe(data) { ... src: '/prorcp/...' }
+        let prorcpPath = (cloudHtml.match(/src\s*:\s*['"](\/prorcp\/[^'"]+)['"]/) || [])[1];
+        
+        if (prorcpPath) {
+            const prorcpUrl = new URL(cloudBase).origin + prorcpPath;
             const finalRes = await safeFetch(prorcpUrl, { headers: { Referer: cloudBase } });
             const finalHtml = finalRes && finalRes.ok ? await finalRes.text() : '';
 
             // 5. DECRYPTION: Find hidden div and post to dec-cloudnestra
+            // The structure might have changed, let's look for any hidden div with base64-like content
             const hidden = finalHtml.match(/<div id="([^"]+)"[^>]*style=["']display\s*:\s*none;?["'][^>]*>([a-zA-Z0-9:\/.,{}\-_=+ ]+)<\/div>/);
             if (hidden) {
                 const divId = hidden[1];
