@@ -116,19 +116,7 @@ async function resolveDirectStreams(media, type, season, episode) {
         }
     }
 
-    // Fallback: Return the Mirror from the official VidSrc API
-    const mirrorUrl = type === 'tv' 
-        ? `https://vidsrc-embed.ru/embed/tv/${imdbId}/${season}-${episode}`
-        : `https://vidsrc-embed.ru/embed/movie/${imdbId}`;
-
-    return [{
-        name: "VidSrc | MIRROR",
-        title: `${mediaTitle} - HD [Mirror]`,
-        url: mirrorUrl,
-        quality: "HD",
-        headers: { Referer: "https://vidsrc-embed.ru/" },
-        provider: "playimdb"
-    }];
+    return [];
 }
 
 async function getStreams(tmdbId, type, season, episode) {
