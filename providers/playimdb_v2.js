@@ -1,5 +1,5 @@
 /**
- * PlayIMDb V2 - Updated to use streamimdb.me
+ * PlayIMDb V2 - Updated to use vsembed.ru
  * Enhanced with Cloudnestra Decryption
  */
 
@@ -32,8 +32,26 @@ function toQualityLabel(text) {
     return 'HD';
 }
 
-async function getTMDBInfo(tmdbId, type) {
-    const url = `${TMDB_BASE}/${type === 'tv' ? 'tv' : 'movie'}/${tmdbId}?api_key=${TMDB_API_KEY}`;
+async function getTMDBInfo(id, type) {
+    let url = `${TMDB_BASE}/${type === 'tv' ? 'tv' : 'movie'}/${id}?api_key=${TMDB_API_KEY}`;
+    
+    // If id is IMDb ID, use /find endpoint
+    if (String(id).startsWith('tt')) {
+        url = `${TMDB_BASE}/find/${id}?api_key=${TMDB_API_KEY}&external_source=imdb_id`;
+        const res = await safeFetch(url);
+        const data = res && res.ok ? await res.json() : null;
+        if (data) {
+            const result = (type === 'tv' ? data.tv_results[0] : data.movie_results[0]);
+            if (result) {
+                return {
+                    title: result.title || result.name,
+                    year: (result.release_date || result.first_air_date || "").split("-")[0],
+                    imdbId: id
+                };
+            }
+        }
+    }
+
     const res = await safeFetch(url);
     const data = res && res.ok ? await res.json() : null;
     if (!data) return null;
@@ -41,30 +59,46 @@ async function getTMDBInfo(tmdbId, type) {
     const info = {
         title: data.title || data.name,
         year: (data.release_date || data.first_air_date || "").split("-")[0],
-        imdbId: data.imdb_id
+        imdbId: data.imdb_id || id
     };
 
     if (!info.imdbId && type === 'tv') {
-        const extRes = await safeFetch(`${TMDB_BASE}/tv/${tmdbId}/external_ids?api_key=${TMDB_API_KEY}`);
+        const extRes = await safeFetch(`${TMDB_BASE}/tv/${id}/external_ids?api_key=${TMDB_API_KEY}`);
         const ext = extRes && extRes.ok ? await extRes.json() : null;
         if (ext) info.imdbId = ext.imdb_id;
     }
     return info;
 }
 
+function detectLanguage(url) {
+    const lowUrl = url.toLowerCase();
+    if (lowUrl.includes('_hi') || lowUrl.includes('hindi')) return 'HN';
+    if (lowUrl.includes('_ta') || lowUrl.includes('tamil')) return 'TM';
+    if (lowUrl.includes('_te') || lowUrl.includes('telugu')) return 'TL';
+    return 'EN';
+}
+
 async function resolveDirectStreams(media, type, season, episode) {
     const imdbId = media.imdbId;
-    // Updated base URL to streamimdb.me
-    const baseUrl = "https://streamimdb.me";
+    const baseUrl = "https://vsembed.ru";
     const playUrl = `${baseUrl}/embed/${imdbId}/`;
     const seStr = type === 'tv' ? ` S${String(season).padStart(2, "0")}E${String(episode).padStart(2, "0")}` : "";
-    const mediaTitle = `${media.title || "Unknown"} (${media.year || "N/A"})${seStr}`;
 
     // 1. Fetch Landing page
     const res = await safeFetch(playUrl);
     const html = res && res.ok ? await res.text() : '';
     
-    // 2. Handle TV menu if needed
+    // Fallback title from HTML if TMDB is missing it
+    let movieTitle = media.title;
+    if (!movieTitle || movieTitle === "Unknown") {
+        const docTitle = (html.match(/<title>([^<]+)<\/title>/i) || [])[1];
+        if (docTitle) movieTitle = docTitle.split('(')[0].trim();
+    }
+    if (!movieTitle) movieTitle = "Unknown";
+
+    const mediaTitle = `${movieTitle} (${media.year || "N/A"})${seStr}`;
+
+    // 2. Handle TV menu
     let targetUrl = playUrl;
     if (type === 'tv') {
         const epDivs = html.match(/<div[^>]+class=["']ep[^>]*>.*?<\/div>/gi) || [];
@@ -82,15 +116,14 @@ async function resolveDirectStreams(media, type, season, episode) {
     // 3. Extract Cloudnestra iframe
     const pageRes = await safeFetch(targetUrl, { headers: { Referer: baseUrl + '/' } });
     const pageHtml = pageRes && pageRes.ok ? await pageRes.text() : '';
-    const iframeSrc = (pageHtml.match(/<iframe[^>]+src=["']([^"']+)["']/) || [])[1];
+    
+    const iframeMatch = pageHtml.match(/iframe id="player_iframe" src="([^"]+)"/);
+    let iframeSrc = iframeMatch ? iframeMatch[1] : (pageHtml.match(/<iframe[^>]+src=["']([^"']+)["']/) || [])[1];
+    
     if (iframeSrc) {
         const cloudBase = (iframeSrc.startsWith('//') ? "https:" + iframeSrc : (iframeSrc.startsWith('/') ? baseUrl + iframeSrc : iframeSrc));
-        
-        // 4. Follow to prorcp layer
         const cloudRes = await safeFetch(cloudBase, { headers: { Referer: targetUrl } });
         const cloudHtml = cloudRes && cloudRes.ok ? await cloudRes.text() : '';
-        
-        // Sometimes it's in a script: loadIframe(data) { ... src: '/prorcp/...' }
         let prorcpPath = (cloudHtml.match(/src\s*:\s*['"](\/prorcp\/[^'"]+)['"]/) || [])[1];
         
         if (prorcpPath) {
@@ -98,8 +131,6 @@ async function resolveDirectStreams(media, type, season, episode) {
             const finalRes = await safeFetch(prorcpUrl, { headers: { Referer: cloudBase } });
             const finalHtml = finalRes && finalRes.ok ? await finalRes.text() : '';
 
-            // 5. DECRYPTION: Find hidden div and post to dec-cloudnestra
-            // The structure might have changed, let's look for any hidden div with base64-like content
             const hidden = finalHtml.match(/<div id="([^"]+)"[^>]*style=["']display\s*:\s*none;?["'][^>]*>([a-zA-Z0-9:\/.,{}\-_=+ ]+)<\/div>/);
             if (hidden) {
                 const divId = hidden[1];
@@ -115,9 +146,10 @@ async function resolveDirectStreams(media, type, season, episode) {
                 if (urls.length > 0) {
                     return urls.map((url, idx) => {
                         const quality = toQualityLabel(url);
+                        const lang = detectLanguage(url);
                         return {
-                            name: `PlayIMDb | Server ${idx + 1}`,
-                            title: `${mediaTitle} - ${quality} [Direct]`,
+                            name: `${movieTitle} | ${quality} | Server ${idx + 1}`,
+                            title: `${mediaTitle}\n[${lang}] Direct Stream`,
                             url: url,
                             quality: quality,
                             headers: { Referer: 'https://cloudnestra.com/' },
@@ -135,15 +167,16 @@ async function resolveDirectStreams(media, type, season, episode) {
 async function getStreams(tmdbId, type, season, episode) {
     try {
         const media = await getTMDBInfo(tmdbId, type);
-        if (!media || !media.imdbId) return [];
-        return await resolveDirectStreams(media, type, season, episode);
+        // Fallback for media if lookup completely failed but we have an ID
+        const finalMedia = media || { title: "Unknown", year: "N/A", imdbId: tmdbId };
+        return await resolveDirectStreams(finalMedia, type, season, episode);
     } catch (e) {
         return [];
     }
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams };
+    module.exports = { getStreams, getTMDBInfo };
 } else {
     global.getStreams = getStreams;
 }
